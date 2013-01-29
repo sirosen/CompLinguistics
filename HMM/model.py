@@ -167,7 +167,7 @@ class HMM(object):
         def alpha_helper(i,t):
             #assert that the world isn't broken
             assert (t >= 0)
-            assert (t < len(s))
+            assert (t <= len(s))
             #grab the base cases
             if t == 0:
                 return self.pi_values[i]
@@ -179,3 +179,41 @@ class HMM(object):
                 return cache[(i,t)]
 
         return alpha_helper(state,time)
+
+    def beta(self,state,time,observation):
+        """
+        Calculates the backward variable alpha_{state}(time) given the observation
+        This is the probability of seeing a specific observation, being in a specific state at a specific timepoint
+
+        Args:
+            state
+            The state being measured
+
+            time
+            The timepoint at which the probability of the state is taken
+
+            observation
+            A string from the corpus
+        """
+        trans = self.transition_map
+        em = self.emission_map
+        states = self.states
+        s = observation
+
+        #a memoizing helper function
+        cache = {}
+        def beta_helper(i,t):
+            #assert that the world is safe
+            assert (t >= 0)
+            assert (t <= len(s))
+            #grab the base cases
+            if t == len(s):
+                return 1
+            elif (i,t) in cache:
+                return cache[(i,t)]
+            #recursive application, equation 9.11
+            else:
+                cache[(i,t)] = sum([beta_helper(j,t+1)*trans[i][j]*em[i][s[t]] for j in states])
+                return cache[(i,t)]
+
+        return beta_helper(state,time)
