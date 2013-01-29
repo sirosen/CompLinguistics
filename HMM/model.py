@@ -5,6 +5,29 @@
 from __future__ import division
 from random import random
 
+
+
+def select_from_probability_dict(value, probability_dict):
+    """
+    Takes in a value and a mapping from keys onto probabilities, and returns the key selected by that value
+
+    Args:
+        value
+        A probability in (0,1)
+
+        probability_dict
+        A dictionary mapping values onto their probabilities
+    """
+    running_total = 0
+    #sort the dictionary by keys, so that we are guaranteed consistent behavior
+    #even when values are added & removed from the dict
+    for k in sorted(probability_dict):
+        v = probability_dict[k]
+        running_total += v
+        if running_total >= value: return k
+    return None
+
+
 class HMM(object):
     #Create a new HMM
     def __init__(self,numstates,alphabet,pi_values={},transition_map={},emission_map={}):
@@ -100,26 +123,6 @@ class HMM(object):
                         self.emission_map[s][l] = p
 
         self.current_state = select_from_probability_dict(random(),self.pi_values)
-
-    def select_from_probability_dict(value, probability_dict):
-        """
-        Takes in a value and a mapping from keys onto probabilities, and returns the key selected by that value
-
-        Args:
-            value
-            A probability in (0,1)
-
-            probability_dict
-            A dictionary mapping values onto their probabilities
-        """
-        running_total = 0
-        #sort the dictionary by keys, so that we are guaranteed consistent behavior
-        #even when values are added & removed from the dict
-        for k in sorted(probability_dict):
-            v = probability_dict[k]
-            running_total += v
-            if running_total >= value: return k
-        return None
 
     def change_state(self):
         """
@@ -217,3 +220,13 @@ class HMM(object):
                 return cache[(i,t)]
 
         return beta_helper(state,time)
+
+    def transition_probability(self, state1, state2, time, observation):
+        trans = self.transition_map
+        em = self.emission_map
+        states = self.states
+        s = observation
+
+        num = self.alpha(state1,time,s)*trans[state1][state2]*em[state1][s[time]]*self.beta(state2,time,s)
+        denom = sum([self.alpha(m,time,s)*trans[m][n]*em[m][s[time]]*self.beta(n,time+1,s) for n in states for m in states])
+        return num / denom
