@@ -5,6 +5,7 @@
 from __future__ import division
 from random import random
 
+from utils import memoize
 
 
 def select_from_probability_dict(value, probability_dict):
@@ -28,6 +29,10 @@ def select_from_probability_dict(value, probability_dict):
     return None
 
 
+"""
+As noted in X. Li, et al, in "Training Hidden Markov Models with Multiple Observations -- A Combinatorial Method",
+even though we have built our HMM with respect to a single observation, we can operate over the sums of probabilities for multiple observations
+"""
 class HMM(object):
     #Create a new HMM
     def __init__(self,numstates,alphabet,pi_values={},transition_map={},emission_map={}):
@@ -147,8 +152,7 @@ class HMM(object):
 
     def alpha(self,state,time,observation):
         """
-        Calculates the forward variable alpha_{state}(time) given the observation
-        This is the probability of being in a given state at a given timepoint, with a specific observation
+        Calculates the forward variable alpha_{state}(time)
 
         Args:
             state
@@ -158,35 +162,30 @@ class HMM(object):
             The timepoint at which the probability of the state is taken
 
             observation
-            A string from the corpus
+            An observed string from the corpus
         """
         trans = self.transition_map
         em = self.emission_map
         states = self.states
-        s = observation
+        O = observation
 
-        #a memoizing helper function
-        cache = {}
+        @memoize
         def alpha_helper(i,t):
             #assert that the world isn't broken
             assert (t >= 0)
-            assert (t <= len(s))
-            #grab the base cases
+            assert (t <= len(O))
+            #grab the base case
             if t == 0:
                 return self.pi_values[i]
-            elif (i,t) in cache:
-                return cache[(i,t)]
             #recursive application, equation 9.10 of Manning and Schutze
             else:
-                cache[(i,t)] = sum([alpha_helper(j,t-1,s,cache)*trans[j][i]*em[j][s[t-1]] for j in states])
-                return cache[(i,t)]
+                return sum(alpha_helper(j,t-1)*trans[j][i]*em[j][O[t-1]] for j in states)
 
         return alpha_helper(state,time)
 
     def beta(self,state,time,observation):
         """
-        Calculates the backward variable alpha_{state}(time) given the observation
-        This is the probability of seeing a specific observation, being in a specific state at a specific timepoint
+        Calculates the backward variable beta_{state}(time)
 
         Args:
             state
@@ -196,37 +195,129 @@ class HMM(object):
             The timepoint at which the probability of the state is taken
 
             observation
-            A string from the corpus
+            An observed string from the corpus
         """
         trans = self.transition_map
         em = self.emission_map
         states = self.states
-        s = observation
+        O = observation
 
-        #a memoizing helper function
-        cache = {}
+        @memoize
         def beta_helper(i,t):
             #assert that the world is safe
             assert (t >= 0)
-            assert (t <= len(s))
-            #grab the base cases
-            if t == len(s):
+            assert (t <= len(O))
+            #grab the base case
+            if t == len(O):
                 return 1
-            elif (i,t) in cache:
-                return cache[(i,t)]
             #recursive application, equation 9.11
             else:
-                cache[(i,t)] = sum([beta_helper(j,t+1)*trans[i][j]*em[i][s[t]] for j in states])
-                return cache[(i,t)]
+                return sum(beta_helper(j,t+1)*trans[i][j]*em[i][O[t]] for j in states)
 
         return beta_helper(state,time)
 
-    def transition_probability(self, state1, state2, time, observation):
+    def p(self, i, j, time, observation):
+        """
+        The probability of transitioning from i to j at a given time
+
+        Args:
+            i
+            The state we transition from
+
+            j
+            The state we transition to
+
+            time
+            The fixed timepoint
+
+            observation
+            An observed string from the corpus
+        """
         trans = self.transition_map
         em = self.emission_map
         states = self.states
-        s = observation
+        O = observation
 
-        num = self.alpha(state1,time,s)*trans[state1][state2]*em[state1][s[time]]*self.beta(state2,time,s)
-        denom = sum([self.alpha(m,time,s)*trans[m][n]*em[m][s[time]]*self.beta(n,time+1,s) for n in states for m in states])
+        num = self.alpha(i,time,O)*trans[i][j]*em[i][O[time]]*self.beta(j,time,O)
+        denom = sum(self.alpha(m,time,O)*trans[m][n]*em[m][O[time]]*self.beta(n,time+1,O) for n in states for m in states)
+        return num / denom
+
+    def gamma(self, i, time, observation):
+        """
+        The probability of being in state i at a given time
+
+        Args:
+            i
+            The state in question
+
+            time
+            The fixed timepoint
+
+            observation
+            An observed string from the corpus
+        """
+        states = self.states
+        O = observation
+
+        #Equation 9.13 from Manning and Schutze
+        num = self.alpha(i,time,O) * self.beta(i,time,O)
+        denom = sum(self.alpha(j,time,O) * self.beta(j,time,O) for j in states)
+
+        return num / denom
+
+
+"""
+We assume the independence of each word in the corpus, and by so doing allow the use of the Levinson training equations below.
+"""
+
+
+    def recalculate_pi(self, i, corpus):
+        """
+        A reestimation of a single pi value
+
+        Args:
+            i
+            The state being considered
+
+            corpus
+            An iterable collection of observations (strings)
+        """
+        return sum(self.gamma(i,0,O) for O in corpus) / len(corpus)
+
+    def recalculate_transition(self, i, j, corpus):
+        """
+        A reestimation of a single transition probability
+
+        Args:
+            i
+            The from state
+
+            j
+            The to state
+
+            corpus
+            An iterable collection of observations (strings)
+        """
+        num = sum(sum(self.p(i, j, t, O) for t in xrange(len(O))) for O in corpus)
+        denom = sum(sum(self.gamma(i, t, O) for t in xrange(len(O))) for O in corpus)
+
+        return num / denom
+
+    def recalculate_emission(self, i, k, corpus):
+        """
+        A reestimation of a single emission probability
+
+        Args:
+            i
+            The emmitting state
+
+            k
+            The emmitted symbol
+
+            corpus
+            An iterable collection of observations (strings)
+        """
+        num = sum(sum(self.gamma(i, t, O) for t in xrange(len(O)) if O[t] == k) for O in corpus)
+        denom = sum(sum(self.gamma(i,t, O) for t in xrange(len(O))) for O in corpus)
+
         return num / denom
