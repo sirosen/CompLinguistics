@@ -30,8 +30,10 @@ def select_from_probability_dict(value, probability_dict):
 
 
 """
-As noted in X. Li, et al, in "Training Hidden Markov Models with Multiple Observations -- A Combinatorial Method",
-even though we have built our HMM with respect to a single observation, we can operate over the sums of probabilities for multiple observations
+As noted in X. Li, et al, in "Training Hidden Markov Models with
+Multiple Observations -- A Combinatorial Method", even though we
+have built our HMM with respect to a single observation, we can
+operate over sums of probabilities for multiple observations.
 """
 class HMM(object):
     #Create a new HMM
@@ -150,7 +152,7 @@ class HMM(object):
         self.emit_symbol()
         self.change_state()
 
-    def alpha(self,state,time,observation):
+    def alpha(self,state,time,observation,clear_cache=False):
         """
         Calculates the forward variable alpha_{state}(time)
 
@@ -163,6 +165,11 @@ class HMM(object):
 
             observation
             An observed string from the corpus
+
+        KWArgs:
+            clear_cache
+            Indicator that the helper should dump its cache.
+            Function returns None when set.
         """
         trans = self.transition_map
         em = self.emission_map
@@ -181,9 +188,13 @@ class HMM(object):
             else:
                 return sum(alpha_helper(j,t-1)*trans[j][i]*em[j][O[t-1]] for j in states)
 
+        if clear_cache:
+            alpha_helper(state,time,_clear_cache=True)
+            return
+
         return alpha_helper(state,time)
 
-    def beta(self,state,time,observation):
+    def beta(self,state,time,observation,clear_cache=False):
         """
         Calculates the backward variable beta_{state}(time)
 
@@ -196,6 +207,11 @@ class HMM(object):
 
             observation
             An observed string from the corpus
+
+        KWArgs:
+            clear_cache
+            Indicator that the helper should dump its cache.
+            Function returns None when set.
         """
         trans = self.transition_map
         em = self.emission_map
@@ -213,6 +229,10 @@ class HMM(object):
             #recursive application, equation 9.11
             else:
                 return sum(beta_helper(j,t+1)*trans[i][j]*em[i][O[t]] for j in states)
+
+        if clear_cache:
+            beta_helper(state,time,clear_cache=True)
+            return
 
         return beta_helper(state,time)
 
@@ -267,7 +287,8 @@ class HMM(object):
 
 
 """
-We assume the independence of each word in the corpus, and by so doing allow the use of the Levinson training equations below.
+We assume the independence of each word in the corpus.
+By so doing, we allow the use of the Levinson training equations below.
 """
 
 
@@ -321,3 +342,56 @@ We assume the independence of each word in the corpus, and by so doing allow the
         denom = sum(sum(self.gamma(i,t, O) for t in xrange(len(O))) for O in corpus)
 
         return num / denom
+
+    def iterate_until_convergence(self,delta,corpus,max_iterations=1000):
+        """
+        Run maximization on the model until all parameters converge within delta.
+        Returns True if we converged, False otherwise
+
+        Args:
+            delta
+            The convergence parameter
+
+            corpus
+            An iterable collection of strings
+
+        KWArgs:
+            max_iterations
+            The maximum number of times that the model will run before giving up on convergence
+        """
+        states = self.states
+
+        #Tests if all parameters fall within delta
+        def delta_condition(new_pi, new_trans, new_em):
+            for i in new_pi:
+                if abs(new_pi[i]-self.pi_values[i]) > delta: return False
+            for i in new_trans:
+                for j in new_trans[i]:
+                    if abs(new_trans[i][j]-self.transition_map[i][j]) > delta: return False
+            for i in new_em:
+                for k in new_em[i]:
+                    if abs(new_em[i][k]-self.emission_map[i][k]) > delta: return False
+            return True
+
+        #Run at most max_iterations steps
+        for i in xrange(max_iterations):
+            #recalculate and normalize each set of values
+            pi_vals = { i:self.recalculate_pi(i,corpus) for i in states }
+            trans_vals = { i:{j: self.recalculate_transition(i,j,corpus) } for i in states }
+            em_vals = { i:{k: self.recalculate_emission(i,k,corpus) } for i in states }
+            normalize(pi_vals)
+            for i in states:
+                normalize(trans_vals[i])
+                normalize(em_vals[i])
+
+            #if we have converged return true
+            if delta_condition(pi_vals,trans_vals,em_vals):
+                return True
+            #otherwise, switch to the new model
+            else:
+                self.pi_values = pi_vals
+                self.transition_map = trans_vals
+                self.emission_map = em_vals
+
+        #if we reach this point, we have not converged, so return False
+        return False
