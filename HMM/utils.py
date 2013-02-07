@@ -3,7 +3,7 @@
 
 from functools import wraps
 
-def @memoize(fun):
+def memoize(fun):
     """
     Takes a function and creates a closure with it and a variable "_cache", the memoization cache.
     Looks up args,kwargs pairs in the cache, and when there is a hit, returns that hit.
@@ -16,11 +16,11 @@ def @memoize(fun):
     @wraps(fun)
     def wrapped(*args, **kwargs):
         if '_clear_cache' in kwargs and kwargs['_clear_cache']:
-            _cache = {}
+            _cache.clear()
         else:
-            if (args,kwargs) not in _cache:
-                _cache[(args,kwargs)] = fun(*args,**kwargs)
-            return _cache[(args,kwargs)]
+            if args not in _cache:
+                _cache[args] = fun(*args,**kwargs)
+            return _cache[args]
 
     return wrapped
 

@@ -2,7 +2,7 @@
 #Author: Stephen Rosen
 
 
-from __future__ import division
+from __future__ import print_function, division
 from random import random
 
 from utils import memoize
@@ -91,6 +91,8 @@ class HMM(object):
                 self.transition_map[s1][s2] = d[s2]
         #As with pi_values, we compute the reserve probability mass, but we must do so on a state by state basis
         for s1 in self.states:
+            if s1 not in transition_map:
+                self.transition_map[s1] = {}
             mass = 1
             numvalues = numstates
             for s2 in self.states:
@@ -102,7 +104,7 @@ class HMM(object):
                 p = mass / numvalues
                 for s2 in self.states:
                     if s1 not in self.transition_map or s2 not in self.transition_map[s1]:
-                        self.transition_map[(s1,s2)] = p
+                        self.transition_map[s1][s2] = p
 
         #Initialize the emission map
         self.emission_map = {}
@@ -111,7 +113,7 @@ class HMM(object):
             #assign equal probability to each letter in each state
             if s not in emission_map:
                 p = 1/len(self.alphabet)
-                self.emission_map[x] = { l:p for l in self.alphabet }
+                self.emission_map[s] = { l:p for l in self.alphabet }
             else:
                 mass = 1
                 numvalues = len(self.alphabet)
@@ -220,6 +222,8 @@ class HMM(object):
 
         @memoize
         def beta_helper(i,t):
+            #print('State: ' + str(i))
+            #print('Time: ' + str(t))
             #assert that the world is safe
             assert (t >= 0)
             assert (t <= len(O))
@@ -234,7 +238,8 @@ class HMM(object):
             beta_helper(state,time,clear_cache=True)
             return
 
-        return beta_helper(state,time)
+        t = beta_helper(state,time)
+        return t
 
     def p(self, i, j, time, observation):
         """
@@ -285,12 +290,10 @@ class HMM(object):
 
         return num / denom
 
-
-"""
-We assume the independence of each word in the corpus.
-By so doing, we allow the use of the Levinson training equations below.
-"""
-
+    """
+    We assume the independence of each word in the corpus.
+    By so doing, we allow the use of the Levinson training equations below.
+    """
 
     def recalculate_pi(self, i, corpus):
         """
@@ -360,6 +363,7 @@ By so doing, we allow the use of the Levinson training equations below.
             The maximum number of times that the model will run before giving up on convergence
         """
         states = self.states
+        from utils import normalize
 
         #Tests if all parameters fall within delta
         def delta_condition(new_pi, new_trans, new_em):
@@ -377,8 +381,8 @@ By so doing, we allow the use of the Levinson training equations below.
         for i in xrange(max_iterations):
             #recalculate and normalize each set of values
             pi_vals = { i:self.recalculate_pi(i,corpus) for i in states }
-            trans_vals = { i:{j: self.recalculate_transition(i,j,corpus) } for i in states }
-            em_vals = { i:{k: self.recalculate_emission(i,k,corpus) } for i in states }
+            trans_vals = { i:{j: self.recalculate_transition(i,j,corpus) for j in states } for i in states }
+            em_vals = { i:{k: self.recalculate_emission(i,k,corpus) for k in self.alphabet } for i in states }
             normalize(pi_vals)
             for i in states:
                 normalize(trans_vals[i])
@@ -395,3 +399,55 @@ By so doing, we allow the use of the Levinson training equations below.
 
         #if we reach this point, we have not converged, so return False
         return False
+
+    def dump_state(self):
+        print('Pi Values')
+        print('\tState:Value')
+        for i in self.pi_values:
+            print('\t'+str(i)+':'+str(self.pi_values[i]))
+        print('Transitions')
+        print('\tState->State:Value')
+        for i in self.transition_map:
+            for j in self.transition_map[i]:
+                print('\t'+str(i)+'->'+str(j)+':'+str(self.transition_map[i][j]))
+        print('Emissions')
+        print('\tState->Symbol:Value')
+        for i in self.emission_map:
+            for k in self.emission_map[i]:
+                print('\t'+str(i)+'->'+str(k)+':'+str(self.emission_map[i][k]))
+
+
+    def soft_counts(self, letter, corpus):
+        #state to soft count
+        state_to_count = {}
+        for i in self.states:
+            tmp = 0
+            for word in words:
+                for t in xrange(len(word)):
+                    if word[t] == letter:
+                        for j in self.states:
+                            tmp += self.p(i,j,t,word)
+            state_to_count[s] = tmp
+        return state_to_count
+
+def corpus_from_file(fname):
+    from string import punctuation
+    f = open(fname,'r')
+    words = f.read().lower().strip().replace(punctuation,'').split()
+    corpus = set('#'+w+'#' for w in words)
+    f.close()
+    return corpus
+
+if __name__ == '__main__':
+    import sys
+    from string import lowercase
+    if len(sys.argv) < 2:
+        print('USAGE: model.py [filename]',file=sys.stderr)
+        sys.exit(2)
+
+    corpus = corpus_from_file(sys.argv[1])
+
+    alphabet = lowercase+'#'
+    h = HMM(2,alphabet)
+    h.iterate_until_convergence(0.1,corpus)
+    h.dump_state()
