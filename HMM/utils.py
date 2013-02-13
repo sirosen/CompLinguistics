@@ -7,20 +7,14 @@ def memoize(fun):
     """
     Takes a function and creates a closure with it and a variable "_cache", the memoization cache.
     Looks up args,kwargs pairs in the cache, and when there is a hit, returns that hit.
-
-    Intercepts the keyword argument '_clear_cache' and interprets it as a signal to dump the cache.
-    Returns nothing in that case.
     """
     _cache = {}
 
     @wraps(fun)
     def wrapped(*args, **kwargs):
-        if '_clear_cache' in kwargs and kwargs['_clear_cache']:
-            _cache.clear()
-        else:
-            if args not in _cache:
-                _cache[args] = fun(*args,**kwargs)
-            return _cache[args]
+        if args not in _cache:
+            _cache[args] = fun(*args,**kwargs)
+        return _cache[args]
 
     return wrapped
 

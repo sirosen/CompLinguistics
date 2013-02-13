@@ -5,8 +5,7 @@
 from __future__ import print_function, division
 from random import random
 
-from utils import memoize
-
+from utils import memoize, normalize
 
 def select_from_probability_dict(value, probability_dict):
     """
@@ -37,7 +36,7 @@ operate over sums of probabilities for multiple observations.
 """
 class HMM(object):
     #Create a new HMM
-    def __init__(self,numstates,alphabet,pi_values={},transition_map={},emission_map={}):
+    def __init__(self,numstates,alphabet,fixed=True,pi_values={},transition_map={},emission_map={}):
         """
         Creates a new Hidden Markov Model.
 
@@ -49,6 +48,9 @@ class HMM(object):
             A set of characters
 
         KWArgs:
+            fixed
+            Sets the probability distribution to be fixed or random.
+
             pi_values
             A dictionary mapping states (integers from 0 to the number of states) to starting probabilities.
             Any unassigned probabilities will be taken to be equal portions of the remaining probability mass.
@@ -77,11 +79,20 @@ class HMM(object):
             self.pi_values[k] = v
             mass -= v
             numvalues -= 1
-        #assign the remaining mass evenly
         if numvalues > 0:
-            p = mass/numvalues
-            for s in self.states.difference(pi_values.keys()):
-                self.pi_values[s] = p
+            #assign the remaining mass evenly
+            if fixed:
+                p = mass/numvalues
+                for s in self.states.difference(pi_values.keys()):
+                    self.pi_values[s] = p
+            #If the probability distribution is not fixed, distribute the remaining mass randomly
+            else:
+                d = {}
+                for s in self.states.difference(pi_values.keys()):
+                    d[s] = random()
+                normalize(d)
+                for s in d:
+                    self.pi_values[s] = mass*d[s]
 
         #Initialize the transition matrix
         self.transition_map = {}
@@ -96,24 +107,43 @@ class HMM(object):
             mass = 1
             numvalues = numstates
             for s2 in self.states:
-                if s1 in self.transition_map and s2 in self.transition_map[s1]:
+                if s2 in self.transition_map[s1]:
                     mass -= self.transition_map[s1][s2]
                     numvalues -= 1
-            #and assign that remaining mass
             if numvalues > 0:
-                p = mass / numvalues
-                for s2 in self.states:
-                    if s1 not in self.transition_map or s2 not in self.transition_map[s1]:
-                        self.transition_map[s1][s2] = p
+                #and assign that remaining mass evenly
+                if fixed:
+                    p = mass / numvalues
+                    for s2 in self.states:
+                        if s2 not in self.transition_map[s1]:
+                            self.transition_map[s1][s2] = p
+                #If the probability distribution is not fixed, distribute the remaining mass randomly
+                else:
+                    d = {}
+                    for s2 in self.states:
+                        if s2 not in self.transition_map[s1]:
+                            d[s2] = random()
+                    normalize(d)
+                    for s2 in d:
+                        self.transition_map[s1][s2] = mass*d[s2]
 
         #Initialize the emission map
         self.emission_map = {}
         for s in self.states:
             #If the state has nothing specified, it takes on the reasonable default
-            #assign equal probability to each letter in each state
             if s not in emission_map:
-                p = 1/len(self.alphabet)
-                self.emission_map[s] = { l:p for l in self.alphabet }
+                #assign equal probability to each letter in each state
+                if fixed:
+                    p = 1/len(self.alphabet)
+                    self.emission_map[s] = { l:p for l in self.alphabet }
+                #If the probability distribution is not fixed, distribute the remaining mass randomly
+                else:
+                    d = { k:random() for k in self.alphabet }
+                    normalize(d)
+                    self.emission_map[s] = {}
+                    for k in d:
+                        self.emission_map[s][k] = mass*d[k]
+
             else:
                 mass = 1
                 numvalues = len(self.alphabet)
@@ -127,9 +157,16 @@ class HMM(object):
                     numvalues -= 1
                 #Assign the remainder probability
                 if numvalues > 0:
-                    p = mass / numvalues
-                    for l in self.alphabet.difference(state_map.keys()):
-                        self.emission_map[s][l] = p
+                    if fixed:
+                        p = mass / numvalues
+                        for l in self.alphabet.difference(state_map.keys()):
+                            self.emission_map[s][l] = p
+                    #If the probability distribution is not fixed, distribute the remaining mass randomly
+                    else:
+                        d = { k:random() for k in self.alphabet.difference(state_map.keys()) }
+                        normalize(d)
+                        for k in d:
+                            self.emission_map[s][k] = mass*d[k]
 
         self.current_state = select_from_probability_dict(random(),self.pi_values)
 
@@ -154,7 +191,7 @@ class HMM(object):
         self.emit_symbol()
         self.change_state()
 
-    def alpha(self,state,time,observation,clear_cache=False):
+    def alpha(self,state,time,observation):
         """
         Calculates the forward variable alpha_{state}(time)
 
@@ -167,11 +204,6 @@ class HMM(object):
 
             observation
             An observed string from the corpus
-
-        KWArgs:
-            clear_cache
-            Indicator that the helper should dump its cache.
-            Function returns None when set.
         """
         trans = self.transition_map
         em = self.emission_map
@@ -179,7 +211,7 @@ class HMM(object):
         O = observation
 
         @memoize
-        def alpha_helper(i,t):
+        def alpha_helper(i,t,O):
             #assert that the world isn't broken
             assert (t >= 0)
             assert (t <= len(O))
@@ -188,15 +220,11 @@ class HMM(object):
                 return self.pi_values[i]
             #recursive application, equation 9.10 of Manning and Schutze
             else:
-                return sum(alpha_helper(j,t-1)*trans[j][i]*em[j][O[t-1]] for j in states)
+                return sum(alpha_helper(j,t-1,O)*trans[j][i]*em[j][O[t-1]] for j in states)
 
-        if clear_cache:
-            alpha_helper(state,time,_clear_cache=True)
-            return
+        return alpha_helper(state,time,O)
 
-        return alpha_helper(state,time)
-
-    def beta(self,state,time,observation,clear_cache=False):
+    def beta(self,state,time,observation):
         """
         Calculates the backward variable beta_{state}(time)
 
@@ -209,11 +237,6 @@ class HMM(object):
 
             observation
             An observed string from the corpus
-
-        KWArgs:
-            clear_cache
-            Indicator that the helper should dump its cache.
-            Function returns None when set.
         """
         trans = self.transition_map
         em = self.emission_map
@@ -221,7 +244,7 @@ class HMM(object):
         O = observation
 
         @memoize
-        def beta_helper(i,t):
+        def beta_helper(i,t,O):
             #print('State: ' + str(i))
             #print('Time: ' + str(t))
             #assert that the world is safe
@@ -232,14 +255,13 @@ class HMM(object):
                 return 1
             #recursive application, equation 9.11
             else:
-                return sum(beta_helper(j,t+1)*trans[i][j]*em[i][O[t]] for j in states)
+                if O[t] == ',':
+                    print("HERE")
+                    import sys
+                    sys.exit(1)
+                return sum(beta_helper(j,t+1,O)*trans[i][j]*em[i][O[t]] for j in states)
 
-        if clear_cache:
-            beta_helper(state,time,clear_cache=True)
-            return
-
-        t = beta_helper(state,time)
-        return t
+        return beta_helper(state,time,O)
 
     def p(self, i, j, time, observation):
         """
@@ -322,8 +344,8 @@ class HMM(object):
             corpus
             An iterable collection of observations (strings)
         """
-        num = sum(sum(self.p(i, j, t, O) for t in xrange(len(O))) for O in corpus)
-        denom = sum(sum(self.gamma(i, t, O) for t in xrange(len(O))) for O in corpus)
+        num = sum(sum(self.p(i, j, t, O) for t in xrange(len(O)-1)) for O in corpus)
+        denom = sum(sum(self.gamma(i, t, O) for t in xrange(len(O)-1)) for O in corpus)
 
         return num / denom
 
@@ -346,7 +368,7 @@ class HMM(object):
 
         return num / denom
 
-    def iterate_until_convergence(self,delta,corpus,max_iterations=1000):
+    def iterate_until_convergence(self,delta,corpus,max_iterations=100):
         """
         Run maximization on the model until all parameters converge within delta.
         Returns True if we converged, False otherwise
@@ -363,7 +385,6 @@ class HMM(object):
             The maximum number of times that the model will run before giving up on convergence
         """
         states = self.states
-        from utils import normalize
 
         #Tests if all parameters fall within delta
         def delta_condition(new_pi, new_trans, new_em):
@@ -430,10 +451,10 @@ class HMM(object):
             state_to_count[s] = tmp
         return state_to_count
 
-def corpus_from_file(fname):
-    from string import punctuation
+def corpus_from_file(alphabet,fname):
+    from string import punctuation, digits
     f = open(fname,'r')
-    words = f.read().lower().strip().replace(punctuation,'').split()
+    words = f.read().lower().strip().translate(None,punctuation+digits).split()
     corpus = set('#'+w+'#' for w in words)
     f.close()
     return corpus
@@ -445,9 +466,9 @@ if __name__ == '__main__':
         print('USAGE: model.py [filename]',file=sys.stderr)
         sys.exit(2)
 
-    corpus = corpus_from_file(sys.argv[1])
-
     alphabet = lowercase+'#'
-    h = HMM(2,alphabet)
-    h.iterate_until_convergence(0.1,corpus)
+    corpus = corpus_from_file(alphabet,sys.argv[1])
+
+    h = HMM(2,alphabet,fixed=False)
+    h.iterate_until_convergence(0.05,corpus)
     h.dump_state()
