@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 #Author: Stephen Rosen
 
-
 from __future__ import print_function, division
 from random import random
 
 from utils import memoize, normalize
+
 
 def select_from_probability_dict(value, probability_dict):
     """
@@ -368,7 +368,7 @@ class HMM(object):
 
         return num / denom
 
-    def iterate_until_convergence(self,delta,corpus,max_iterations=100):
+    def iterate_until_convergence(self,delta,corpus,max_iterations=1000):
         """
         Run maximization on the model until all parameters converge within delta.
         Returns True if we converged, False otherwise
@@ -469,6 +469,6 @@ if __name__ == '__main__':
     alphabet = lowercase+'#'
     corpus = corpus_from_file(alphabet,sys.argv[1])
 
-    h = HMM(2,alphabet,fixed=False)
-    h.iterate_until_convergence(0.05,corpus)
+    h = HMM(3,alphabet,fixed=False)
+    h.iterate_until_convergence(0.01,corpus)
     h.dump_state()
