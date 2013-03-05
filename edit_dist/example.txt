@@ -1,0 +1,8 @@
+sirosen@templar:~/CompLinguistics/edit_dist$ python dist.py thenameofthegame theresmyname
+Cost: 7.0
+thenameofthegame
+ther  e smy name
+sirosen@templar:~/CompLinguistics/edit_dist$ python dist.py ninakushukuru unamshukuru
+Cost: 3.1
+ninakushukuru
+ unam shukuru
